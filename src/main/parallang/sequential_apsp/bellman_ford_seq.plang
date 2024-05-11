@@ -1,0 +1,95 @@
+fn mod(n: int, b: int) -> int {
+    return n - b * (n/b);
+}
+
+fn printIfMain(a: int) -> unit {
+    if (myX == 0 && myY == 0) { println(a); }
+}
+
+fn bellmanFord(distance: array[int], predecessor: array[int], adjacencyList: array[array[int]]) -> unit {
+    // maximum path is graph diameter
+    for (var _: int = 0; _ < len(distance); _ = _ + 1) {
+        printIfMain(_);
+        var changes: int = 0;
+        // D[u]
+        for (var u: int = 0; u < len(distance); u = u + 1) {
+            // edge (u, v) with weight w
+            for (var v_index: int = 0; v_index < len(adjacencyList[2*u]); v_index = v_index + 1) {
+                var v: int = adjacencyList[2*u][v_index];
+                var w: int = adjacencyList[2*u+1][v_index];
+                if (distance[v] > distance[u] + w) {
+                    distance[v] = distance[u] + w;
+                    predecessor[v] = u;
+                    changes = 1;
+                }
+            }
+        }
+        if (changes == 0) {
+            return unit;
+        }
+    }
+}
+
+fn edgeListToAdjacencyList(edgeList: array[array[int]], numNodes: int) -> array[array[int]] {
+    // adjacency list contains adjacent pairs of two arrays
+    //      position 2*i => array of destination vertices for vertex i
+    //      position 2*i+1 => array of weights corresponding to dest vertex in array 2*i
+    var edgeCounts: array[int] = array[int](numNodes, 0);
+    for (var i: int = 0; i < len(edgeList); i = i + 1) {
+        var u: int = edgeList[i][0];
+        edgeCounts[u] = edgeCounts[u] + 1;
+    }
+
+    var adjacencyList: array[array[int]] = array[array[int]](2*numNodes, {});
+    for (var i: int = 0; i < numNodes; i = i + 1) {
+        adjacencyList[2*i] = array[int](edgeCounts[i], 0);
+        adjacencyList[2*i+1] = array[int](edgeCounts[i], 0);
+    }
+
+    for (var i: int = 0; i < len(edgeList); i = i + 1) {
+        var edge: array[int] = edgeList[i];
+        var u: int = edge[0];
+        var v: int = edge[1];
+        var length: int = edge[2];
+        var index: int = edgeCounts[u] - 1;
+        adjacencyList[2*u][index] = v;
+        adjacencyList[2*u+1][index] = length;
+        edgeCounts[u] = index;
+    }
+    return adjacencyList;
+}
+
+if (myX == 0 && myY == 0) {
+    recv[int] q <- external;
+
+    recv[array[array[int]]] edgeList <- external;
+    recv[int] numNodes <- external;
+    var adjacencyList: array[array[int]] = edgeListToAdjacencyList(edgeList, numNodes);
+
+    var distanceMatrix: array[array[int]] = array[array[int]](numNodes, array[int](numNodes, inf));
+    var predecessorMatrix: array[array[int]] = array[array[int]](numNodes, array[int](numNodes, inf));
+
+    for (var i: int = 0; i < numNodes; i = i + 1) {
+        var distance: array[int] = distanceMatrix[i];
+        var predecessor: array[int] = predecessorMatrix[i];
+
+        for (var j: int = 0; j < len(adjacencyList[2*i]); j = j + 1) {
+            distance[adjacencyList[2*i][j]] = adjacencyList[2*i+1][j];
+        }
+
+        distance[i] = 0;
+
+        for (var j: int = 0; j < len(distance); j = j + 1) {
+            if (distance[j] != inf) {
+                predecessor[j] = i;
+            } else {
+                predecessor[j] = j;
+            }
+        }
+
+        bellmanFord(distance, predecessor, adjacencyList);
+    }
+
+    send distanceMatrix -> external;
+    send predecessorMatrix -> external;
+}

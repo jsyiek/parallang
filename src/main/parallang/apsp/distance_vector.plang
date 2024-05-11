@@ -1,0 +1,229 @@
+recv[int] q <- external;
+
+var numNodes: int = 0;
+
+fn mod(n: int, b: int) -> int {
+    return n - b * (n/b);
+}
+
+fn XYtoMinID(x: int, y: int) -> int {
+    return q*x + y;
+}
+
+fn IDtoIndex(id: int) -> int {
+    return (id - XYtoMinID(myX, myY)) / (q*q);
+}
+
+// id = q*x + y
+fn XfromID(n: int) -> int {
+    return mod(n, q*q) / q;
+}
+
+fn YfromID(n: int) -> int {
+    return mod(mod(n, q*q), q);
+}
+
+fn printIfMain(a: int) -> unit {
+    if (myX == 0 && myY == 0) { println(a); }
+}
+
+// containsUpdate is a boolean
+// source: the node ID of the source
+// dest: the node ID of the destination
+// containsUpdate: whether or not this message's distance vector has changed compared to last.
+// distances: an optional distance vector (either {} or the full vector)
+struct message(source: int, dest: int, containsUpdate: int, distances: array[int]);
+
+// Implements the distance vector protocol (really, an alternative parallelization of Bellman-Ford)
+// sources (array[int]): List of integer node IDs that this node is responsible for.
+// incomingEdges (array[array[int]]): An array of node IDs for each node that this node receives updates from
+// outgoingEdges (array[array[int]]): An array of node IDs for each node that this node sends updates to
+// successor (array[array[int]]): An array of successor values for each node. to be returned.
+// distances (array[array[int]]): An array of distances values to each node. to be returned.
+fn distanceVector(sources: array[int], egressEdges: array[array[int]], ingressEdges: array[array[int]], successor: array[array[int]], distances: array[array[int]]) -> unit {
+
+    var distancesToUse: array[int] = {};
+    if (len(distances) > 0) {
+        distancesToUse = distances[0];
+    }
+    var edgeCosts: array[array[int]] = array[array[int]](len(sources), array[int](len(distancesToUse), inf));
+
+    for (var nodeIndex: int = 0; nodeIndex < len(sources); nodeIndex = nodeIndex + 1) {
+        for (var targIndex: int = 0; targIndex < len(ingressEdges[nodeIndex]); targIndex = targIndex + 1) {
+            var targ: int = ingressEdges[nodeIndex][targIndex];
+            send new message(sources[nodeIndex], targ, 1, distances[nodeIndex]) -> worker XfromID(targ), YfromID(targ);
+        }
+
+        for (var egressID: int = 0; egressID < len(distances[nodeIndex]); egressID = egressID + 1) {
+            edgeCosts[nodeIndex][egressID] = distances[nodeIndex][egressID];
+        }
+    }
+
+    var hasUpdated: array[int] = array[int](len(sources), 0);
+
+    for (var _: int = 0; _ < numNodes; _ = _ + 1) {
+        printIfMain(_);
+
+        for (var source_i: int = 0; source_i < len(sources); source_i = source_i + 1) {
+
+            var nodeEgressEdges: array[int] = egressEdges[source_i];
+
+            // we need to hit each possible sender at least once. it doesn't matter in which order we do it.
+            for (var targIndex: int = 0; targIndex < len(nodeEgressEdges); targIndex = targIndex + 1) {
+                var targ: int = nodeEgressEdges[targIndex];
+                recv[struct message] update <- worker XfromID(targ), YfromID(targ);
+
+                var src: int = update.dest;
+                // due to message ordering guarantees of the underlying, we don't know which node pair this is
+                // necessarily for. it might be the one we are indexing, but not necessarily.
+                var nodeIndex: int = IDtoIndex(src);
+
+                if (update.containsUpdate) {
+                    var nodeDistances: array[int] = distances[nodeIndex];
+                    var recvDist: array[int] = update.distances;
+                    for (var i: int = 0; i < len(recvDist); i = i + 1) {
+                        if (recvDist[i] + edgeCosts[nodeIndex][update.source] < nodeDistances[i]) {
+                            hasUpdated[nodeIndex] = 1;
+                            distances[nodeIndex][i] = recvDist[i] + edgeCosts[nodeIndex][update.source];
+                            successor[nodeIndex][i] = update.source;
+                        }
+                    }
+                }
+            }
+        }
+        // only waste time sending full distances if we've updated our distances
+        for (var nodeIndex: int = 0; nodeIndex < len(sources); nodeIndex = nodeIndex + 1) {
+            var distancesToUse: array[int] = {};
+            if (hasUpdated[nodeIndex]) {
+                distancesToUse = distances[nodeIndex];
+            }
+
+            var nodeIngressEdges: array[int] = ingressEdges[nodeIndex];
+            var src: int = sources[nodeIndex];
+            for (var targIndex: int = 0; targIndex < len(nodeIngressEdges); targIndex = targIndex + 1) {
+                var targ: int = nodeIngressEdges[targIndex];
+                send new message(src, targ, hasUpdated[nodeIndex], distancesToUse) -> worker XfromID(targ), YfromID(targ);
+            }
+            hasUpdated[nodeIndex] = 0;
+        }
+    }
+}
+
+fn expandEdgeList(edgeList: array[array[int]], numNodes: int) -> array[array[int]] {
+    var result: array[array[int]] = array[array[int]](numNodes, array[int](numNodes, inf));
+
+    for (var i: int = 0; i < len(edgeList); i = i + 1) {
+        var edge: array[int] = edgeList[i];
+        var u: int = edge[0];
+        var v: int = edge[1];
+        var length: int = edge[2];
+        result[u][v] = length;
+        //result[v][u] = length;
+    }
+    for (var i: int = 0; i < len(result); i = i + 1) {
+        result[i][i] = 0;
+    }
+    return result;
+}
+
+fn transpose(in: array[array[int]], out: array[array[int]]) -> unit {
+    for (var r: int = 0; r < len(in); r = r + 1) {
+        for (var c: int = 0; c < len(in[0]); c = c + 1) {
+            out[c][r] = in[r][c];
+        }
+    }
+}
+
+if (myX == 0 && myY == 0) {
+    recv[int] numNodes <- external;
+    send numNodes -> broadcast;
+    send numNodes -> worker 0, 0;
+    recv[array[array[int]]] edgeList <- external;
+    var expandedMatrix: array[array[int]] = expandEdgeList(edgeList, numNodes);
+    for (var node: int = 0; node < len(expandedMatrix); node = node + 1) {
+        send expandedMatrix[node] -> worker XfromID(node), YfromID(node);
+        var column: array[int] = array[int](numNodes, 0);
+        for (var i: int = 0; i < numNodes; i = i + 1) {
+            column[i] = expandedMatrix[i][node];
+        }
+        send column -> worker XfromID(node), YfromID(node);
+    }
+}
+
+recv numNodes <- worker 0, 0;
+
+var minNodeResponsibleFor: int = XYtoMinID(myX, myY);
+var numNodesResponsibleFor: int = (numNodes) / (q*q) + (mod(numNodes, q*q) > minNodeResponsibleFor);
+println(numNodesResponsibleFor);
+
+var egressNodes: array[array[int]] = array[array[int]](numNodesResponsibleFor, {});
+var ingressNodes: array[array[int]] = array[array[int]](numNodesResponsibleFor, {});
+var successor: array[array[int]] = array[array[int]](numNodesResponsibleFor, array[int](numNodes, 0));
+var distances: array[array[int]] = array[array[int]](numNodesResponsibleFor, {});
+var sources: array[int] = array[int](numNodesResponsibleFor, 0);
+
+for (var nodeIndex: int = 0; nodeIndex < numNodesResponsibleFor; nodeIndex = nodeIndex + 1) {
+    var thisNodeId: int = minNodeResponsibleFor + nodeIndex*q*q;
+    sources[nodeIndex] = thisNodeId;
+    recv[array[int]] outgoingDistances <- worker 0, 0;
+    distances[nodeIndex] = outgoingDistances;
+
+    // the set of edges to send along and the set of edges to receive are different
+    recv[array[int]] incomingDistances <- worker 0, 0;
+
+    var nodeSuccessor: array[int] = successor[nodeIndex];
+
+    var numOutgoing: int = 0;
+    var numIncoming: int = 0;
+
+    for (var i: int = 0; i < numNodes; i = i + 1) {
+        if (outgoingDistances[i] < inf) {
+            if (i != thisNodeId) { numOutgoing = numOutgoing + 1; }
+            nodeSuccessor[i] = i;
+        } else {
+            nodeSuccessor[i] = thisNodeId;
+        }
+
+        if (incomingDistances[i] < inf && i != thisNodeId) {
+            numIncoming = numIncoming + 1;
+        }
+    }
+
+    var currOutgoing: int = 0;
+    var egress: array[int] = array[int](numOutgoing, 0);
+    egressNodes[nodeIndex] = egress;
+    for (var i: int = 0; i < numNodes; i = i + 1) {
+        if (nodeSuccessor[i] == i && i != thisNodeId) {
+            egress[currOutgoing] = i;
+            currOutgoing = currOutgoing + 1;
+        }
+    }
+
+    var currIncoming: int = 0;
+    var ingress: array[int] = array[int](numIncoming, 0);
+    ingressNodes[nodeIndex] = ingress;
+    for (var i: int = 0; i < numNodes; i = i + 1) {
+        if (incomingDistances[i] < inf && i != thisNodeId) {
+            ingress[currIncoming] = i;
+            currIncoming = currIncoming + 1;
+        }
+    }
+}
+
+distanceVector(sources, egressNodes, ingressNodes, successor, distances);
+
+for (var nodeIndex: int = 0; nodeIndex < len(sources); nodeIndex = nodeIndex + 1) {
+    send successor[nodeIndex] -> worker 0, 0;
+    send distances[nodeIndex] -> worker 0, 0;
+}
+
+if (myX == 0 && myY == 0) {
+    var result: array[array[int]] = array[array[int]](numNodes, {});
+    var resultDistances: array[array[int]] = array[array[int]](numNodes, {});
+    for (var nodeID: int = 0; nodeID < numNodes; nodeID = nodeID + 1) {
+        recv result[nodeID] <- worker XfromID(nodeID), YfromID(nodeID);
+        recv resultDistances[nodeID] <- worker XfromID(nodeID), YfromID(nodeID);
+    }
+    send resultDistances -> external;
+    send result -> external;
+}

@@ -1,0 +1,247 @@
+// Constants
+recv[int] q <- external;
+
+var scaleFactor_global: int = 0;
+
+fn mod(n: int, b: int) -> int {
+    return n - b * (n/b);
+}
+
+fn printIfMain(a: int) -> unit {
+    if (myX == 0 && myY == 0) { println(a); }
+}
+
+fn matSquareWithPredecessor(m1: array[array[int]], m2: array[array[int]], result: array[array[int]], p: array[array[int]], pPrev: array[array[int]]) -> unit {
+	for (var i: int = 0; i < len(m1); i = i + 1) {
+		for (var j: int = 0; j < len(m2[0]); j = j + 1) {
+			for (var k: int = 0; k < len(m1[0]); k = k + 1) {
+				var possibleRoute: int = m1[i][k] + m2[k][j];
+				if (possibleRoute < result[i][j]) {
+				    result[i][j] = possibleRoute;
+				    p[i][j] = pPrev[k][j];
+				}
+			}
+		}
+	}
+}
+
+// assume c is initialized as the correct initial matrix corresponding to this cell.
+fn cannons(a: array[array[int]],
+           b: array[array[int]],
+           c: array[array[int]],
+           pResult: array[array[int]],
+           maxIt: int) -> unit {
+
+
+    var pBorrowed: array[array[int]] = array[array[int]](len(a), array[int](len(a), inf));
+
+    // compute b's predecessor matrix
+    var real_row: int = mod(q+myX+myY, q);
+    for (var x: int = 0; x < len(b); x = x + 1) {
+        for (var y: int = 0; y < len(b); y = y + 1) {
+            if (b[x][y] != inf) {
+                pBorrowed[x][y] = x+scaleFactor_global*real_row;
+            } else {
+                pBorrowed[x][y] = y+scaleFactor_global*myY;
+            }
+
+            if (c[x][y] != inf) {
+                pResult[x][y] = x+scaleFactor_global*myX;
+            } else {
+                pResult[x][y] = y+scaleFactor_global*myY;
+            }
+        }
+    }
+
+    var westNeighbor: int = mod(q+myY-1, q);
+    var eastNeighbor: int = mod(q+myY+1, q);
+    var northNeighbor: int = mod(q+myX-1, q);
+    var southNeighbor: int = mod(q+myX+1, q);
+
+    var a_swap_position: int = mod(q - myX, q);
+    var b_swap_position: int = mod(q - myY, q);
+
+    for (var matMultIt: int = 0; matMultIt < maxIt; matMultIt = matMultIt + 1) {
+        printIfMain(-matMultIt);
+        for (var internalLoop: int = 0; internalLoop < q; internalLoop = internalLoop + 1) {
+            printIfMain(internalLoop);
+            // all matmult is doing is computing edge relaxations.
+            // it's therefore not necessary to fully complete an iteration
+            // with a given matrix if we have a "better" distance set.
+            // it's therefore safe to swap `a` and `b` with a more
+            // up to date version of they are the result we are calculating.
+            // when these conditions are met, we swap them to avoid the
+            // wind up of the cannon's algorithm to ensure we continue to
+            // combine paths.
+            // this allows us to endure only n+1 iterations instead of 3n-2
+            if (internalLoop == a_swap_position) {
+                a = c;
+            }
+            if (internalLoop == b_swap_position) {
+                b = c;
+                pBorrowed = pResult;
+            }
+            matSquareWithPredecessor(a, b, c, pResult, pBorrowed);
+            send a -> worker myX, westNeighbor;
+            recv a <- worker myX, eastNeighbor;
+            send b -> worker northNeighbor, myY;
+            send pBorrowed -> worker northNeighbor, myY;
+            recv b <- worker southNeighbor, myY;
+            recv pBorrowed <- worker southNeighbor, myY;
+        }
+    }
+
+
+}
+
+fn flattenToMatrix(arr: array[array[array[array[int]]]]) -> array[array[int]] {
+    var numRows: int = len(arr) * len(arr[0][0]);
+    var numCols: int = len(arr[0]) * len(arr[0][0]);
+    var result: array[array[int]] = array[array[int]](numRows, array[int](numCols, 0));
+
+    for (var i: int = 0; i < numRows; i = i + 1) {
+        for (var j: int = 0; j < numCols; j = j + 1) {
+            var blockRow: int = i / len(arr[0][0]);
+            var blockCol: int = j / len(arr[0][0]);
+            var blockRowIndex: int = mod(i, len(arr[0][0]));
+            var blockColIndex: int = mod(j, len(arr[0][0]));
+            result[i][j] = arr[blockRow][blockCol][blockRowIndex][blockColIndex];
+        }
+    }
+    return result;
+}
+
+fn extractSubmatrix(matrixIn: array[array[int]], row1: int, col1: int, row2: int, col2: int) -> array[array[int]] {
+
+    var submatrixRows: int = row2 - row1 + 1;
+    var submatrixCols: int = col2 - col1 + 1;
+
+    var result: array[array[int]] = array[array[int]](submatrixRows, array[int](submatrixCols, 0));
+
+    for (var i: int = 0; i < submatrixRows; i = i + 1) {
+        for (var j: int = 0; j < submatrixCols; j = j + 1) {
+            result[i][j] = matrixIn[row1 + i][col1 + j];
+        }
+    }
+    return result;
+}
+
+fn submatrixFor(arr: array[array[int]], r: int, c: int) -> array[array[int]] {
+    // the block length
+    var b: int = len(arr)/q;
+    return extractSubmatrix(arr, r*b, c*b, r*b+b-1, c*b+b-1);
+}
+
+fn expandEdgeList(edgeList: array[array[int]], numNodes: int) -> array[array[int]] {
+
+    // to generalize fox, we need to find a matrix divisible into q squares, and store it in there
+    // this is equivalent to flooding the graph with extra nodes with no connectivity to other nodes
+    // (because they will have infinite edge length to all other nodes).
+    var size: int = numNodes;
+    while (mod(size, q) != 0) {
+        size = size + 1;
+    }
+
+    scaleFactor_global = size/q;
+    send scaleFactor_global -> broadcast;
+    // broadcast doesn't send to itself
+    send scaleFactor_global -> worker 0, 0;
+
+    var result: array[array[int]] = array[array[int]](size, array[int](size, inf));
+    for (var i: int = 0; i < len(edgeList); i = i + 1) {
+        var edge: array[int] = edgeList[i];
+        var u: int = edge[0];
+        var v: int = edge[1];
+        var length: int = edge[2];
+        result[u][v] = length;
+        //result[v][u] = length;
+    }
+    for (var i: int = 0; i < len(result); i = i + 1) {
+        result[i][i] = 0;
+    }
+    return result;
+}
+
+fn log2(n: int) -> int {
+    var result: int = 0;
+    var original: int = n;
+    while (n > 0) {
+        n = n / 2;
+        result = result + 1;
+    }
+    return result;
+}
+
+// Setup code
+if (myX == 0 && myY == 0) {
+
+    // Assume: qxq matrices have been provided
+    recv[array[array[int]]] edgeList <- external;
+    recv[int] numNodes <- external;
+
+    var m: array[array[int]] = expandEdgeList(edgeList, numNodes);
+    for (var r: int = 0; r < q; r = r + 1) {
+        for (var c: int = 0; c < q; c = c + 1) {
+            var submatr: array[array[int]] = submatrixFor(m, r, c);
+            send submatr -> worker mod(q+r-c, q), c;
+            send submatr -> worker r, mod(q+c-r, q);
+        }
+    }
+
+    for (var r: int = 0; r < q; r = r + 1) {
+        for (var c: int = 0; c < q; c = c + 1) {
+            var submatr: array[array[int]] = submatrixFor(m, r, c);
+            send submatr -> worker r, c;
+        }
+    }
+}
+
+// Receive/create data
+recv scaleFactor_global <- worker 0, 0;
+
+// a and b are not necessarily sent in the same order for each PE
+// so we need to test to find out which we are due to receive first.
+// we receive a from (myX, sender)
+// we receive b from (sender, myY)
+// therefore, we receive a first iff myX < sender || myX == sender && sender < myY
+var sender: int = mod(q+myY+myX, q);
+
+var a: array[array[int]] = {};
+var b: array[array[int]] = {};
+
+if (myX < sender || myX == sender && sender < myY) {
+    recv a <- worker 0, 0;
+    recv b <- worker 0, 0;
+} else {
+    recv b <- worker 0, 0;
+    recv a <- worker 0, 0;
+}
+
+recv[array[array[int]]] distances <- worker 0, 0;
+
+var predecessor: array[array[int]] = array[array[int]](len(b), array[int](len(b), inf));
+//var distances: array[array[int]] = array[array[int]](len(b), array[int](len(b), inf));
+
+
+
+// Generate full distance and predecessor matrices
+cannons(a, b, distances, predecessor, log2(scaleFactor_global*q)+1);
+
+// Pass data to central core
+send distances -> worker 0, 0;
+send predecessor -> worker 0, 0;
+
+// Termination code
+if (myX == 0 && myY == 0) {
+    var C: array[array[array[array[int]]]] = array[array[array[array[int]]]](q, array[array[array[int]]](q, {}));
+    var P: array[array[array[array[int]]]] = array[array[array[array[int]]]](q, array[array[array[int]]](q, {}));
+    for (var i: int = 0; i < q; i = i + 1) {
+        for (var j: int = 0; j < q; j = j + 1) {
+            recv C[i][j] <- worker i, j;
+            recv P[i][j] <- worker i, j;
+        }
+    }
+    send flattenToMatrix(C) -> external;
+    send flattenToMatrix(P) -> external;
+}
+

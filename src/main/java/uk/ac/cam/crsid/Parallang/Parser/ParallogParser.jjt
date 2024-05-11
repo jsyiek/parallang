@@ -1,0 +1,603 @@
+options {
+    MULTI = true;
+    STATIC = false;
+}
+
+PARSER_BEGIN(ParallogParser)
+
+package uk.ac.cam.crsid.Parallang.Parser;
+
+import scala.Option;
+
+public class ParallogParser {
+    public static void main(String args[]) {
+        System.out.println("Reading from stdin...");
+        ParallogParser parser = new ParallogParser(System.in);
+        try {
+            ASTStart result = parser.Start();
+            result.dump("");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}}
+}
+
+PARSER_END(ParallogParser)
+
+/* KEYWORDS */
+TOKEN :
+{
+      < Fn        : "fn">
+    | < Var       : "var">
+    | < Int       : "int" >
+    | < Array     : "array" >
+    | < List      : "list" >
+    | < Struct    : "struct" >
+    | < New       : "new" >
+    | < Unit      : "unit" >
+    | < Len       : "len" >
+    | < Get       : "get" >
+    | < Println   : "println" >
+    | < Option  : "option" >
+    | < None      : "none">
+    | < Some      : "some">
+    | < Map       : "map" >
+    | < If        : "if">
+    | < Else      : "else">
+    | < For       : "for">
+    | < While     : "while">
+    | < Return    : "return">
+    | < Send      : "send">
+    | < Recv      : "recv">
+    | < TryRecv   : "tryrecv">
+    | < Worker    : "worker">
+    | < Broadcast : "broadcast">
+    | < BroadcastRow : "broadcast_row">
+    | < BroadcastCol : "broadcast_col">
+    | < External    : "external">
+    | < MyX       : "myX">
+    | < MyY       : "myY">
+    | < NumRows   : "NumRows">
+    | < NumCols   : "NumCols">
+    | < NumWorkers: "NumWorkers">
+    | < isMainCore: "isMainCore">
+    | < BoolNot   : "!">
+    | < ShortOr   : "||">
+    | < ShortAnd  : "&&">
+    | < Infinity  : "inf">
+    | < Name      : ["a"-"z", "A"-"Z", "_"] (["a"-"z", "A"-"Z", "_", "0"-"9"])* >
+    | < Number    : (["0"-"9"])+>
+}
+
+SKIP :
+{
+  " "
+| "\t"
+| "\n"
+| "\r"
+| <"//" (~["\n","\r"])* ("\n"|"\r"|"\r\n")>
+| <"/*" (~["*"])* "*" (~["/"] (~["*"])* "*")* "/">
+}
+
+ASTStart Start() #Start : {}
+{
+    Code() <EOF>
+    {return jjtThis;}
+}
+
+void Type() :
+{
+    Token t;
+}
+{
+    (
+        (t = <Int>)
+        | (t = <Array> "[" Type() "]")
+        | (t = <Option> "[" Type() "]")
+        | (t = <Struct> Name())
+        | (t = "unit")
+    )
+
+    { jjtThis.setType(t.image); }
+}
+
+void Code() :
+{}
+{
+    (
+        (
+            Statement()
+            | ((SoloExpression())? ";")
+        )
+    )*
+}
+
+void Function() :
+{ Token blameToken; }
+{
+    blameToken = <Fn> Name() "(" DefnArguments() ")" "->" Type() "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void StructureDecl() :
+{Token blameToken;}
+{
+    blameToken = <Struct> Name() "(" DefnArguments() ")"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void DefnArguments() :
+{}
+{
+    (Name() ":" Type() ("," Name() ":" Type() )*)?
+}
+
+void Statement() #void :
+{}
+{
+    (Return() ";")
+    | Conditional()
+    | (Declaration() ";")
+    | StructureDecl()
+    | Function()
+    | WhileLoop()
+    | ForLoop()
+    | (Send() ";")
+//  | (TryRecv() ";")
+    | (BlockRecv() ";")
+    | (Println() ";")
+}
+
+void Len() :
+{ Token blameToken; }
+{
+    blameToken=<Len> "(" Expression() ")" { jjtThis.setBlameToken(blameToken);}
+}
+
+void Println() :
+{}
+{
+    <Println> "(" Expression() ")"
+}
+
+void Expression() #void :
+{}
+{
+    Assignment()
+}
+
+void Declaration() :
+{ Token blameToken; }
+{
+    blameToken=<Var> Name() ":" Type() "=" Expression()
+    { jjtThis.setBlameToken(blameToken); }
+
+}
+
+void Send() :
+{ Token blameToken; }
+{
+    <Send> Expression() blameToken="->" SendTarget()
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void SendTarget() #Target :
+{ Token target; }
+{
+    (
+        target = <Broadcast>
+        | (target = <BroadcastRow>)
+        | (target = <BroadcastCol>)
+        | ((target = <Worker>) Expression() "," Expression())
+        | (target = <External>)
+    )
+    { jjtThis.setTarget(target.image); }
+}
+
+void RecvTarget() #Target :
+{ Token target; }
+{
+    (
+        ((target = <Worker>) Expression() "," Expression())
+        | (target = <External>)
+    )
+    { jjtThis.setTarget(target.image); }
+}
+
+void BlockRecv() :
+{
+    Token blameToken;
+    Token varToken = null;
+}
+{
+    // We allow "var" to appear here to allow an implicit declaration
+    <Recv> ((varToken="[" Type() "]"  Name()) | lvalue()) blameToken="<-" RecvTarget()
+    {
+        jjtThis.setBlameToken(blameToken);
+        jjtThis.setVarToken(varToken);
+    }
+}
+
+void TryRecv() :
+{ Token blameToken; }
+{
+    <TryRecv> lvalue() blameToken="<-" RecvTarget()
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void lvalue() #void :
+{}
+{
+    LValueAttributeAccess()
+}
+
+void Conditional():
+{}
+{
+    If()
+    (LOOKAHEAD(2) ElseIf())*
+    (Else())?
+}
+
+void If() :
+{ Token blameToken; }
+{
+    blameToken=<If> "(" Expression() ")" "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+
+}
+
+void ElseIf() #If :
+{ Token blameToken; }
+{
+     blameToken=<Else> <If> "(" Expression() ")" "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void Else() :
+{Token blameToken; }
+{
+    blameToken=<Else> "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void SoloExpression() :
+{}
+{
+    Expression()
+}
+
+void ForLoop() :
+{ Token blameToken; }
+{
+    blameToken=<For> "(" OptForLoopDecl() ";" OptForLoopExpr() ";" OptForLoopExpr() ")" "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void OptForLoopExpr() #OptExpr :
+{ }
+{
+    (Expression())?
+}
+
+void OptForLoopDecl() #OptExpr :
+{ }
+{
+    (Declaration() | Expression())?
+}
+
+void WhileLoop() :
+{ Token blameToken; }
+{
+    blameToken=<While> "(" Expression() ")" "{" Code() "}"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void Return() :
+{ Token blameToken; }
+{
+    blameToken=<Return> Expression()
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void Call() :
+{ Token blameToken; }
+{
+    Name() blameToken="(" CallArguments() ")"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void ArrayValue() :
+{ Token blameToken; }
+{
+    blameToken="{" CallArguments() "}" { jjtThis.setBlameToken(blameToken); }
+}
+
+void ArrayAutoCreation() :
+{ Token blameToken; }
+{
+    blameToken=<Array> "[" Type() "]" "(" Expression() "," Value() ")"
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void CallArguments() :
+{}
+{
+    (Expression() ("," Expression())*)?
+}
+
+void GLGeLeOperator() #Operator :
+{ Token op; } {
+    (op = ">" | op = "<" | op = ">=" | op = "<=" )
+    { jjtThis.setOperator(op.image); jjtThis.setBlameToken(op); }
+}
+
+void EqNeqOperator() #Operator :
+{ Token op; }
+{
+    (op = "==" | op = "!=")
+    { jjtThis.setOperator(op.image); jjtThis.setBlameToken(op); }
+}
+
+void AddSubOperator() #Operator :
+{ Token op; }
+{
+    (op = "+" | op = "-")
+    { jjtThis.setOperator(op.image); jjtThis.setBlameToken(op); }
+}
+
+void MultDivOperator() #Operator :
+{ Token op; }
+{
+    (op = "*" | op = "/")
+    { jjtThis.setOperator(op.image); jjtThis.setBlameToken(op); }
+}
+
+void Assignment() #void :
+{ }
+{
+    (LOOKAHEAD(LValueAttributeAccess() "=") LValueAttributeAccess() "=" Assignment()
+    | LogicalOr())
+    #Assignment(>1)
+}
+
+void LogicalOr() #void :
+{ Token blameToken = null; }
+{
+    (
+        (
+            LogicalAnd() (
+                blameToken="||" LogicalAnd()
+            )*
+        )
+        { jjtThis.setBlameToken(blameToken); }
+    )
+    #LogicalOr(>1)
+}
+
+void LogicalAnd() #void :
+{ Token blameToken = null; }
+{
+    (
+        (
+            GLGeLe() (
+                blameToken="&&" GLGeLe()
+            )*
+        ) { jjtThis.setBlameToken(blameToken); }
+    )
+    #LogicalAnd(>1)
+
+}
+
+void GLGeLe() #void :
+{}
+{
+    (
+        EqNeq() (
+            LOOKAHEAD(2)
+            GLGeLeOperator()
+            EqNeq()
+        )*
+    ) #MathOp(>1)
+}
+
+void EqNeq() #void :
+{}
+{
+    (
+        AddSub() (
+            LOOKAHEAD(2)
+            EqNeqOperator()
+            AddSub()
+        )*
+    ) #EqNeq(>1)
+}
+
+void AddSub() #void :
+{}
+{
+    (
+        DivisionMult() (
+            LOOKAHEAD(2)
+            AddSubOperator()
+            DivisionMult()
+        )*
+    ) #MathOp(>1)
+}
+
+void DivisionMult() #void:
+{}
+{
+    (
+        Unary() (
+            LOOKAHEAD(2)
+            MultDivOperator() Unary()
+        )*
+    )
+    #MathOp(>1)
+}
+
+void Unary() #void :
+{}
+{
+    "+" Unary() | Negation() | AttributeAccess()
+}
+
+void Negation() :
+{ Token blameToken; }
+{
+    blameToken="-" Unary()
+    {jjtThis.setBlameToken(blameToken);}
+}
+
+void AttributeAccess() #void :
+{ Token blameToken = null; }
+{
+    ((
+        LOOKAHEAD(RValueIndex() ".") (RValueIndex() blameToken="." (LOOKAHEAD(Index() ".") Index() ".")* Index())
+        | RValueIndex()
+    ) {jjtThis.setBlameToken(blameToken);}) #AttributeAccess(>1)
+}
+
+void LValueAttributeAccess() #void :
+{ Token blameToken = null; }
+{
+    ((
+        LOOKAHEAD(Index() ".") (Index() blameToken="." (LOOKAHEAD(Index() ".") Index() ".")* Index())
+        | Index()
+    ) {jjtThis.setBlameToken(blameToken);}) #AttributeAccess(>1)
+}
+
+void RValueIndex() #void:
+{ }
+{
+    (
+        LOOKAHEAD(Value() "[")
+        (Value() Indices())
+        | Value()
+    )
+    #Index(>1)
+}
+
+void Value() #void :
+{}
+{
+    "(" Expression() ")"
+    | Number()
+    | LOOKAHEAD(2) Call()
+    | Len()
+    | Get()
+    | Name()
+    | StructValue()
+    | ArrayValue()
+    | ArrayAutoCreation()
+    | OptionalValue()
+    | UnitValue()
+    | myX()
+    | myY()
+    | numRows()
+    | numCols()
+}
+
+void StructValue() :
+{}
+{
+    <New> Name() "(" CallArguments() ")"
+}
+
+void OptionalValue() :
+{ Token option; }
+{
+    (
+        (option = <None>)
+        | (option = <Some> "(" Expression() ")")
+    )
+    { jjtThis.setOption(option.image); jjtThis.setBlameToken(option); }
+}
+
+void Index() #void :
+{ }
+{
+    (
+        LOOKAHEAD(2) (Name() Indices())
+        | Name()
+    )
+    #Index(>1)
+}
+
+void Indices() :
+{ Token blameToken; }
+{
+    (
+        blameToken="[" Expression() "]" ("[" Expression() "]")*
+    ) { jjtThis.setBlameToken(blameToken); }
+}
+
+void Number() :
+{
+    Token n;
+}
+{
+    ((n = <Number>) | (n = <Infinity> ))
+    {
+        jjtThis.setBlameToken(n);
+        if (n.image.equals("inf")) {
+            jjtThis.setNumber(Long.MAX_VALUE);
+        } else {
+            jjtThis.setNumber(Long.parseLong(n.image));
+        }
+    }
+}
+
+void Name() :
+{
+ Token n;
+}
+{
+    n=<Name>
+    {
+        jjtThis.setName(n.image);
+        jjtThis.setBlameToken(n);
+    }
+}
+
+void myX():
+{ Token blameToken; }
+{
+    (blameToken=<MyX>)
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void myY():
+{ Token blameToken; }
+{
+    (blameToken=<MyY>)
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void numRows():
+{ Token blameToken; }
+{
+    (blameToken=<NumRows>)
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void numCols():
+{ Token blameToken; }
+{
+    (blameToken=<NumCols>)
+    { jjtThis.setBlameToken(blameToken); }
+}
+
+void UnitValue() :
+{ Token blameToken; }
+{
+    blameToken = <Unit> { jjtThis.setBlameToken(blameToken); }
+}
+
+void Get() :
+{ Token blameToken; }
+{
+    blameToken=<Get> "(" Expression() ")" { jjtThis.setBlameToken(blameToken); }
+}

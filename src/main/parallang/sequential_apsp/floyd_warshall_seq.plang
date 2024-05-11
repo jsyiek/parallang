@@ -1,0 +1,70 @@
+recv[int] q <- external;
+var scaleFactor_global: int = 0;
+
+fn mod(n: int, b: int) -> int {
+    return n - b * (n/b);
+}
+
+
+fn printIfMain(a: int) -> unit {
+    if (myX == 0 && myY == 0) { println(a); }
+}
+
+fn floyd_warshall(d: array[array[int]], p: array[array[int]]) -> unit {
+    for (var x: int = 0; x < len(d); x = x + 1) {
+        for (var y: int = 0; y < len(d); y = y + 1) {
+            if (d[x][y] != inf) {
+                p[x][y] = x+scaleFactor_global*myX;
+            } else {
+                p[x][y] = y+scaleFactor_global*myY;
+            }
+        }
+    }
+    for (var i: int = 0; i < len(d); i = i + 1) {
+        for (var j: int = 0; j < len(d); j = j + 1) {
+            for (var k: int = 0; k < len(d); k = k + 1) {
+                if (d[i][j] > d[i][k] + d[k][j]) {
+                    d[i][j] = d[i][k] + d[k][j];
+                    p[i][j] = p[k][j];
+                }
+            }
+        }
+    }
+}
+
+fn expandEdgeList(edgeList: array[array[int]], numNodes: int) -> array[array[int]] {
+
+    // to generalize fox, we need to find a matrix divisible into q squares, and store it in there
+    // this is equivalent to flooding the graph with extra nodes with no connectivity to other nodes
+    // (because they will have infinite edge length to all other nodes).
+    var size: int = numNodes;
+
+    scaleFactor_global = size/q;
+
+    var result: array[array[int]] = array[array[int]](size, array[int](size, inf));
+    for (var i: int = 0; i < len(edgeList); i = i + 1) {
+        var edge: array[int] = edgeList[i];
+        var u: int = edge[0];
+        var v: int = edge[1];
+        var length: int = edge[2];
+        result[u][v] = length;
+        //result[v][u] = length;
+    }
+    for (var i: int = 0; i < len(result); i = i + 1) {
+        result[i][i] = 0;
+    }
+    return result;
+}
+
+if (myX == 0 && myY == 0) {
+
+    // Assume: qxq matrices have been provided
+    recv[array[array[int]]] edgeList <- external;
+    recv[int] numNodes <- external;
+
+    var d: array[array[int]] = expandEdgeList(edgeList, numNodes);
+    var p: array[array[int]] = array[array[int]](len(d), array[int](len(d), inf));
+    floyd_warshall(d, p);
+    send d -> external;
+    send p -> external;
+}
