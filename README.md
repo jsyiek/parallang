@@ -137,4 +137,4 @@ This code was produced for my undergraduate dissertation for the *Computer Scien
 
 I examined five parallelizations of solutions to the *all-pairs shortest paths* problem: Cannon's algorithm and the Fox-Otto algorithm for min-plus matrix exponentiation, the Floyd-Warshall algorithm, the distance vector algorithm, and the Bellman-Ford algorithm. The simulator was created to accomplish analysis at scale and be free of the variability in the underlying host computer. My results used road-network datasets and demonstrated that *superlinear speedup* could be achieved for the first three, that the Bellman-Ford algorithm was the fastest, and that the distance vector algorithm is abysmally inefficient. 
 
-My supervisor was *Dr Jagdish Modi*, who suggested the project. My mark on this project is yet to be published. 
+My supervisor was *Dr Jagdish Modi*, who suggested the project. I achieved a high class I mark on this project.
